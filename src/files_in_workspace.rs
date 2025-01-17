@@ -394,7 +394,7 @@ async fn _ls_files_under_version_control_recursive(
     info!("also the loop bumped into {} blacklisted dirs", blacklisted_dirs_cnt);
 }
 
-/// `allow_files_in_hidden_folders`: true when syncing to container
+/// `allow_files_in_hidden_folders`: should usually be true when syncing to container
 pub async fn retrieve_files_in_workspace_folders(
     proj_folders: Vec<PathBuf>,
     allow_files_in_hidden_folders: bool,
