@@ -394,9 +394,10 @@ async fn _ls_files_under_version_control_recursive(
     info!("also the loop bumped into {} blacklisted dirs", blacklisted_dirs_cnt);
 }
 
+/// `allow_files_in_hidden_folders`: true when syncing to container
 pub async fn retrieve_files_in_workspace_folders(
     proj_folders: Vec<PathBuf>,
-    allow_files_in_hidden_folders: bool,   // true when syncing to remote container
+    allow_files_in_hidden_folders: bool,
     ignore_size_thresholds: bool,
 ) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let mut all_files: Vec<PathBuf> = Vec::new();
