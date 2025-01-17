@@ -241,7 +241,7 @@ tools:
 
   - name: "locate"
     agentic: true
-    description: "Get a list of files that are relevant to solve a particular task."
+    description: "Get a list of files that are relevant to solve a particular task. Don't use it if you know which files you need, use `cat` instead for that."
     parameters:
       - name: "problem_statement"
         type: "string"
