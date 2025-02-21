@@ -1,3 +1,5 @@
+use chrono::{Utc, DateTime};
+use std::path::PathBuf;
 use std::sync::Arc;
 use axum::Extension;
 use axum::http::{Response, StatusCode};
@@ -7,8 +9,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock as ARwLock;
 use url::Url;
 
+use crate::call_validation::ChatMeta;
+use crate::files_correction::{deserialize_path, serialize_path};
 use crate::custom_error::ScratchError;
-use crate::git::{CommitInfo, stage_changes, get_configured_author_email_and_name};
+use crate::git::{CommitInfo, FileChange};
+use crate::git::operations::{get_configured_author_email_and_name, stage_changes};
+use crate::git::checkpoints::{preview_changes_for_workspace_checkpoint, restore_workspace_checkpoint, Checkpoint};
 use crate::global_context::GlobalContext;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -21,6 +27,38 @@ pub struct GitError {
     pub error_message: String,
     pub project_name: String,
     pub project_path: Url,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CheckpointsPost {
+    pub checkpoints: Vec<Checkpoint>,
+    pub meta: ChatMeta,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct CheckpointsPreviewResponse {
+    pub reverted_changes: Vec<WorkspaceChanges>,
+    pub checkpoints_for_undo: Vec<Checkpoint>,
+    #[serde(serialize_with = "serialize_datetime_utc")]
+    pub reverted_to: DateTime<Utc>,
+    pub error_log: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct CheckpointsRestoreResponse {
+    pub success: bool, 
+    pub error_log: Vec<String>,
+}
+
+fn serialize_datetime_utc<S: serde::Serializer>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct WorkspaceChanges {
+    #[serde(serialize_with = "serialize_path", deserialize_with = "deserialize_path")]
+    pub workspace_folder: PathBuf,
+    pub files_changed: Vec<FileChange>,
 }
 
 pub async fn handle_v1_git_commit(
@@ -72,7 +110,7 @@ pub async fn handle_v1_git_commit(
             Err(e) => { error_log.push(git_error(format!("Failed to get current branch: {}", e))); continue; }
         };
         
-        let commit_oid = match crate::git::commit(&repository, &branch, &commit.commit_message, &author_name, &author_email) {
+        let commit_oid = match crate::git::operations::commit(&repository, &branch, &commit.commit_message, &author_name, &author_email) {
             Ok(oid) => oid,
             Err(e) => { error_log.push(git_error(e)); continue; }
         };
@@ -91,5 +129,82 @@ pub async fn handle_v1_git_commit(
             "commits_applied": commits_applied,
             "error_log": error_log,
         })).unwrap()))
+        .unwrap())
+}
+
+pub async fn handle_v1_checkpoints_preview(
+    Extension(gcx): Extension<Arc<ARwLock<GlobalContext>>>,
+    body_bytes: hyper::body::Bytes,
+) -> Result<Response<Body>, ScratchError> {
+    let post = serde_json::from_slice::<CheckpointsPost>(&body_bytes)
+        .map_err(|e| ScratchError::new(StatusCode::UNPROCESSABLE_ENTITY, format!("JSON problem: {}", e)))?;
+
+    if post.checkpoints.is_empty() {
+        return Err(ScratchError::new(StatusCode::UNPROCESSABLE_ENTITY, "No checkpoints to restore".to_string()));
+    }
+    if post.checkpoints.len() > 1 {
+        return Err(ScratchError::new(StatusCode::NOT_IMPLEMENTED, "Multiple checkpoints to restore not implemented yet".to_string()));
+    }
+
+    let response = match preview_changes_for_workspace_checkpoint(gcx.clone(), &post.checkpoints.first().unwrap(), &post.meta.chat_id).await {
+        Ok((files_changed, reverted_to, checkpoint_for_undo)) => {
+            CheckpointsPreviewResponse {
+                reverted_changes: vec![WorkspaceChanges {
+                    workspace_folder: post.checkpoints.first().unwrap().workspace_folder.clone(),
+                    files_changed,
+                }],
+                checkpoints_for_undo: vec![checkpoint_for_undo],
+                reverted_to,
+                error_log: vec![],
+            }
+        },
+        Err(e) => {
+            CheckpointsPreviewResponse {
+                error_log: vec![e],
+                ..Default::default()
+            }
+        }
+    };
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(serde_json::to_string(&response).unwrap()))
+        .unwrap())
+}
+
+pub async fn handle_v1_checkpoints_restore(
+    Extension(gcx): Extension<Arc<ARwLock<GlobalContext>>>,
+    body_bytes: hyper::body::Bytes,
+) -> Result<Response<Body>, ScratchError> {
+    let post = serde_json::from_slice::<CheckpointsPost>(&body_bytes)
+        .map_err(|e| ScratchError::new(StatusCode::UNPROCESSABLE_ENTITY, format!("JSON problem: {}", e)))?;
+
+    if post.checkpoints.is_empty() {
+        return Err(ScratchError::new(StatusCode::UNPROCESSABLE_ENTITY, "No checkpoints to restore".to_string()));
+    }
+    if post.checkpoints.len() > 1 {
+        return Err(ScratchError::new(StatusCode::NOT_IMPLEMENTED, "Multiple checkpoints to restore not implemented yet".to_string()));
+    }
+
+    let response = match restore_workspace_checkpoint(gcx.clone(), &post.checkpoints.first().unwrap(), &post.meta.chat_id).await {
+        Ok(_) => {
+            CheckpointsRestoreResponse {
+                success: true,
+                error_log: vec![],
+            }
+        },
+        Err(e) => {
+            CheckpointsRestoreResponse {
+                error_log: vec![e],
+                ..Default::default()
+            }
+        }
+    };
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(serde_json::to_string(&response).unwrap()))
         .unwrap())
 }

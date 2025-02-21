@@ -7,6 +7,7 @@ use ropey::Rope;
 
 
 use crate::custom_error::ScratchError;
+use crate::git::checkpoints::Checkpoint;
 use crate::scratchpads::multimodality::MultimodalElement;
 
 
@@ -152,22 +153,16 @@ pub struct ChatUsage {
 pub struct ChatMessage {
     pub role: String,
     pub content: ChatContent,
-    #[serde(default, skip_serializing_if="is_none")]
+    #[serde(default, skip_serializing_if="Option::is_none")]
     pub finish_reason: Option<String>,
-    #[serde(default, skip_serializing_if="is_none")]
+    #[serde(default, skip_serializing_if="Option::is_none")]
     pub tool_calls: Option<Vec<ChatToolCall>>,
-    #[serde(default, skip_serializing_if="is_empty_string")]
+    #[serde(default, skip_serializing_if="String::is_empty")]
     pub tool_call_id: String,
-    #[serde(default, skip_serializing_if="is_none")]
+    #[serde(default, skip_serializing_if="Option::is_none")]
     pub usage: Option<ChatUsage>,
-}
-
-fn is_none<T>(opt: &Option<T>) -> bool {
-    opt.is_none()
-}
-
-fn is_empty_string(something: &String) -> bool {
-    something.is_empty()
+    #[serde(default, skip_serializing_if="Vec::is_empty")]
+    pub checkpoints: Vec<Checkpoint>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -204,6 +199,8 @@ pub struct ChatPost {
     #[serde(default)]
     pub tools_confirmation: bool,
     #[serde(default)]
+    pub checkpoints_enabled: bool,
+    #[serde(default)]
     pub only_deterministic_messages: bool,  // means don't sample from the model
     #[serde(default)]
     pub subchat_tool_parameters: IndexMap<String, SubchatParameters>, // tool_name: {model, allowed_context, temperature}
@@ -229,7 +226,7 @@ pub struct ChatMeta {
     pub current_config_file: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Copy)]
 #[allow(non_camel_case_types)]
 pub enum ChatMode {
     NO_TOOLS,
@@ -238,6 +235,16 @@ pub enum ChatMode {
     CONFIGURE,
     PROJECT_SUMMARY,
     THINKING_AGENT,
+}
+
+impl ChatMode {
+    pub fn supports_checkpoints(self) -> bool {
+        match self {
+            ChatMode::NO_TOOLS | ChatMode::EXPLORE => false,
+            ChatMode::AGENT | ChatMode::CONFIGURE | ChatMode::PROJECT_SUMMARY | 
+                ChatMode::THINKING_AGENT => true,
+        }
+    }
 }
 
 impl Default for ChatMode {

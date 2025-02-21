@@ -12,7 +12,7 @@ use crate::global_context::GlobalContext;
 use crate::integrations::go_to_configuration_message;
 use crate::tools::tool_patch_aux::tickets_parsing::get_tickets_from_messages;
 use crate::agentic::generate_follow_up_message::generate_follow_up_message;
-use crate::git::{get_commit_information_from_current_changes, generate_commit_messages};
+use crate::git::commit_info::{get_commit_information_from_current_changes, generate_commit_messages};
 // use crate::http::routers::v1::git::GitCommitPost;
 
 #[derive(Deserialize, Clone, Debug)]
@@ -188,7 +188,7 @@ pub async fn handle_v1_links(
             s.push(format!(
                 "In project {}:\n{}{}",
                 commit.get_project_name(),
-                commit.file_changes.iter().take(3).map(|f| format!("{} {}", f.status.initial(), f.path)).collect::<Vec<_>>().join("\n"),
+                commit.file_changes.iter().take(3).map(|f| format!("{} {}", f.status.initial(), f.relative_path.to_string_lossy())).collect::<Vec<_>>().join("\n"),
                 if commit.file_changes.len() > 3 { format!("\n...{} files more\n", commit.file_changes.len() - 3) } else { format!("\n") },
             ));
         }
@@ -207,7 +207,7 @@ pub async fn handle_v1_links(
                     "git commit -m \"{}{}\"\n{}",
                     commit_with_msg.commit_message.lines().next().unwrap_or(""),
                     if commit_with_msg.commit_message.lines().count() > 1 { "..." } else { "" },
-                    commit_with_msg.file_changes.iter().map(|f| format!("{} {}", f.status.initial(), f.path)).collect::<Vec<_>>().join("\n"),
+                    commit_with_msg.file_changes.iter().map(|f| format!("{} {}", f.status.initial(), f.relative_path.to_string_lossy())).collect::<Vec<_>>().join("\n"),
                 );
                 links.push(Link {
                     link_action: LinkAction::Commit,
